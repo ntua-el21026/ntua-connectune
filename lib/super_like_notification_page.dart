@@ -102,7 +102,7 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
   void _like(String username, String fcmToken, String songTitle) async {
     print('Like registered for $username');
 
-    await FCMService.sendNotification(
+    final notificationSent = await FCMService.sendNotification(
       token: fcmToken,
       title: 'You got a new Like!',
       body: 'Someone liked your song $songTitle!',
@@ -124,7 +124,9 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
     _vibrate();
 
     // Show the SnackBar
-    _showSnackBar('Like sent!');
+    _showSnackBar(notificationSent
+        ? 'Like recorded; notification accepted.'
+        : 'Like recorded. Notifications require a trusted server.');
   }
 
   Future<void> _superLike(String songTitle, String fcmToken) async {
@@ -156,7 +158,7 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
           }
         }, SetOptions(merge: true));
 
-        await FCMService.sendNotification(
+        final notificationSent = await FCMService.sendNotification(
           token: fcmToken,
           title: 'You got a Super Like!',
           body: 'Someone super liked your song $songTitle!',
@@ -168,7 +170,9 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
         _vibrate();
 
         // Show the SnackBar
-        _showSnackBar('Super Like sent!');
+        _showSnackBar(notificationSent
+            ? 'Super Like recorded; notification accepted.'
+            : 'Super Like recorded. Notifications require a trusted server.');
       } else {
         setState(() {
           _hasSuperLiked = false;

@@ -3,8 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:listen_around/auth/login.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:listen_around/spotify.dart';
-import 'package:flutter/services.dart';
-import 'package:listen_around/notification.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:listen_around/super_like_notification_page.dart';
@@ -16,10 +14,6 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterL
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-
-  // Load and initialize FCM service
-  final serviceAccountJson = await rootBundle.loadString('assets/listen-around-firebase-adminsdk-b1ffs-d04a168c30.json');
-  await FCMService.initialize(serviceAccountJson);
 
   const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
 
