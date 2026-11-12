@@ -4,9 +4,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:listen_around/auth/login.dart';
 import 'package:listen_around/home.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'spotify_oauth.dart';
 
 class SpotifyAuthPage extends StatefulWidget {
-  const SpotifyAuthPage({Key? key}) : super(key: key);
+  final bool forceReconnect;
+  const SpotifyAuthPage({Key? key, this.forceReconnect = false})
+      : super(key: key);
 
   @override
   _SpotifyAuthPageState createState() => _SpotifyAuthPageState();
@@ -26,59 +30,90 @@ class _SpotifyAuthPageState extends State<SpotifyAuthPage> {
 
   void _logout(BuildContext context) async {
     await FirebaseAuth.instance.signOut();
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
   }
 
   Future<void> _checkStoredToken() async {
-    await _secureStorage.delete(key: _accessTokenKey);
-    final token = await _secureStorage.read(key: _accessTokenKey);
-    if (token != null) {
-      setState(() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final key = '$_accessTokenKey:$uid';
+    final expiryKey = 'spotify_expires_at:$uid';
+    try {
+      if (widget.forceReconnect) {
+        await _secureStorage.delete(key: key);
+        await _secureStorage.delete(key: expiryKey);
+        return;
+      }
+      final token = await _secureStorage.read(key: key);
+      final expiry =
+          DateTime.tryParse(await _secureStorage.read(key: expiryKey) ?? '');
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != uid) return;
+      if (token != null &&
+          expiry != null &&
+          SpotifyAccessToken(token, expiry).isUsableAt(DateTime.now())) {
         _accessToken = token;
-      });
-      _navigateToHomePage();
+        _navigateToHomePage();
+      }
+    } catch (_) {
+      // A locked/unavailable keystore must not prevent a fresh authorization.
     }
   }
 
   Future<void> _authenticateSpotify() async {
     setState(() => _isLoading = true);
-
     try {
-      const clientId = '';
-      const redirectUri = '';
-      const scope = 'user-read-playback-state user-read-currently-playing';
-
-      final authUrl = Uri.parse('https://accounts.spotify.com/authorize'
-          '?client_id=$clientId'
-          '&response_type=token'
-          '&redirect_uri=$redirectUri'
-          '&scope=$scope');
-
-
-      // Launch the authentication URL and get the callback URL
-      final result = await FlutterWebAuth2.authenticate(
-        url: authUrl.toString(),
-        callbackUrlScheme: 'listen-around',
-      );
-
-      // Extract the token from the callback URL
-      final fragment = Uri.parse(result).fragment;
-      final params = Uri.splitQueryString(fragment);
-      final token = params['access_token'];
-
-      if (token != null) {
-        await _secureStorage.write(key: _accessTokenKey, value: token);
-        setState(() => _accessToken = token);
-        _navigateToHomePage();
-      } else {
-        throw Exception('Access token not found');
+      const clientId = String.fromEnvironment('SPOTIFY_CLIENT_ID');
+      const redirectValue = String.fromEnvironment('SPOTIFY_REDIRECT_URI');
+      final redirect = Uri.tryParse(redirectValue);
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null ||
+          clientId.isEmpty ||
+          redirect == null ||
+          !redirect.hasScheme) {
+        throw StateError(
+            'Configure the Spotify client ID and registered redirect URI');
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Authentication failed: ${e.toString()}')),
+      final attempt = SpotifyAuthorizationAttempt.create();
+      final result = await FlutterWebAuth2.authenticate(
+        url: attempt
+            .authorizationUri(clientId: clientId, redirect: redirect)
+            .toString(),
+        callbackUrlScheme: redirect.scheme,
       );
+      final code = attempt.readCode(result, redirect);
+      final client = http.Client();
+      late SpotifyAccessToken token;
+      try {
+        token = await exchangeSpotifyCode(
+            client: client,
+            clientId: clientId,
+            redirect: redirect,
+            code: code,
+            verifier: attempt.verifier,
+            now: DateTime.now());
+      } finally {
+        client.close();
+      }
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != uid) return;
+      await _secureStorage.write(
+          key: '$_accessTokenKey:$uid', value: token.value);
+      await _secureStorage.write(
+          key: 'spotify_expires_at:$uid',
+          value: token.expiresAt.toIso8601String());
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != uid) return;
+      _accessToken = token.value;
+      _navigateToHomePage();
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Spotify connection was not completed. Check configuration and try again.')),
+        );
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -87,6 +122,7 @@ class _SpotifyAuthPageState extends State<SpotifyAuthPage> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
+          settings: const RouteSettings(name: '/home'),
           builder: (context) => HomePage(accessToken: _accessToken!),
         ),
       );
@@ -102,14 +138,14 @@ class _SpotifyAuthPageState extends State<SpotifyAuthPage> {
       body: Center(
         child: _isLoading
             ? const CircularProgressIndicator()
-            : Column(mainAxisAlignment: MainAxisAlignment.center, 
-            children: [
+            : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 ElevatedButton.icon(
                   onPressed: _authenticateSpotify,
                   icon: const Icon(Icons.music_note),
                   label: const Text('Connect with Spotify'),
                   style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
                   ),
                 ),
                 ElevatedButton(
