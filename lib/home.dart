@@ -10,6 +10,8 @@ import 'package:listen_around/song.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:listen_around/profile_page.dart';
+import 'package:listen_around/discovery_data.dart';
+import 'package:listen_around/spotify.dart';
 
 class HomePage extends StatefulWidget {
   final String accessToken;
@@ -28,127 +30,186 @@ class _HomePageState extends State<HomePage> {
   bool isSpotifyPlaying = false;
   StreamSubscription? _subscription;
   Timer? _refreshTimer;
-  bool _isSubscriptionActive = false;
+  int _subscriptionVersion = 0;
+  Future<void>? _refreshFuture;
+  bool _profileOpen = false;
+  bool _spotifySessionExpired = false;
 
   @override
   void initState() {
     super.initState();
-    //_requestNotificationPermission();
-
     _setupLocationAndPermissions();
     _refreshTimer = Timer.periodic(const Duration(seconds: 180), (_) {
-      _updateCurrentlyPlaying();
+      _refreshListening();
     });
   }
 
   @override
   void dispose() {
+    _subscriptionVersion++;
     _subscription?.cancel();
     _refreshTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _requestNotificationPermission() async {
-    final FirebaseMessaging messaging = FirebaseMessaging.instance;
+  void _stopNearbyUsersSubscription() {
+    _subscriptionVersion++;
+    _subscription?.cancel();
+    _subscription = null;
+    if (mounted) {
+      setState(() => nearbyUsers = []);
+    }
+  }
 
-    final NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      announcement: false,
-      badge: true,
-      carPlay: false,
-      criticalAlert: false,
-      provisional: false,
-      sound: true,
-    );
-
-    if (settings.authorizationStatus == AuthorizationStatus.denied) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Notification permissions denied'),
-        ),
-      );
-    } else if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Notification permissions granted'),
-        ),
-      );
-    } else if (settings.authorizationStatus == AuthorizationStatus.provisional) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Provisional notification permissions granted'),
-        ),
-      );
+  void _stopListening() {
+    _stopNearbyUsersSubscription();
+    if (mounted) {
+      setState(() => isSpotifyPlaying = false);
     }
   }
 
   Future<void> _setupLocationAndPermissions() async {
     try {
+      var serviceEnabled = await location.serviceEnabled();
+      if (!mounted) return;
+      if (!serviceEnabled) {
+        serviceEnabled = await location.requestService();
+        if (!mounted) return;
+      }
+      if (!serviceEnabled) {
+        _stopListening();
+        return;
+      }
       final locationPermission = await location.requestPermission();
+      if (!mounted) return;
       if (locationPermission == PermissionStatus.granted) {
-        location.changeSettings(accuracy: LocationAccuracy.high, interval: 10000);
-        await _getCurrentLocation();
-        await _updateCurrentlyPlaying();
+        await location.changeSettings(
+          accuracy: LocationAccuracy.high,
+          interval: 10000,
+        );
+        if (!mounted) return;
+        await _refreshListening();
       } else {
-        setState(() {
-          isSpotifyPlaying = false;
-        });
+        _stopListening();
       }
     } catch (e) {
-      debugPrint('Error setting up location: ${e.toString()}');
+      _stopListening();
+      debugPrint('Error setting up location: $e');
     }
   }
 
-  Future<void> _getCurrentLocation() async {
-    print('getting location');
+  Future<bool> _getCurrentLocation() async {
     try {
-      _currentLocation = await location.getLocation();
-      print(_currentLocation);
+      final currentLocation = await location.getLocation();
+      if (!mounted) return false;
+      if (currentLocation.latitude == null ||
+          currentLocation.longitude == null) {
+        _currentLocation = null;
+        return false;
+      }
+      _currentLocation = currentLocation;
+      return true;
     } catch (e) {
-      debugPrint('Error getting location: ${e.toString()}');
+      _currentLocation = null;
+      debugPrint('Error getting location: $e');
+      return false;
     }
   }
 
-  Future<void> _updateListeningData(Map<String, dynamic> trackData) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null && _currentLocation != null) {
-      String? fcmToken = await FirebaseMessaging.instance.getToken();
-
-      // Fetch user data to include name and likes
-      final userSnapshot = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-      final userData = userSnapshot.data() ?? {};
-
-      final name = userData['name'] ?? 'Unknown User';
-      final likes = (userData['likes'] ?? 0);
-
-      await FirebaseFirestore.instance.collection('listening_data').doc(user.uid).set({
-        'userId': user.uid,
-        'song': trackData['song'],
-        'fcmToken': fcmToken,
-        'songId': trackData['songId'],
-        'artistName': trackData['artistName'],
-        'previewUrl': trackData['previewUrl'],
-        'name': name, // Add user's name
-        'likes': likes, // Add user's likes
-        'imageUrl': trackData['imageUrl'],
-        'geo': GeoFirePoint(
-          GeoPoint(
-            _currentLocation!.latitude!,
-            _currentLocation!.longitude!,
-          ),
-        ).data,
-        'timestamp': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+  Future<void> _refreshListening() async {
+    if (_refreshFuture != null) return _refreshFuture!;
+    if (!mounted ||
+        _profileOpen ||
+        _spotifySessionExpired ||
+        FirebaseAuth.instance.currentUser == null) {
+      return;
     }
+    final refresh = _refreshListeningOnce();
+    _refreshFuture = refresh;
+    try {
+      await refresh;
+    } finally {
+      _refreshFuture = null;
+    }
+  }
+
+  Future<void> _refreshListeningOnce() async {
+    if (!await _getCurrentLocation()) {
+      _stopListening();
+      return;
+    }
+    if (!mounted || _profileOpen) return;
+    // Each location refresh replaces the query's fixed geographic center.
+    _stopNearbyUsersSubscription();
+    await _updateCurrentlyPlaying();
+  }
+
+  Future<bool> _updateListeningData(Map<String, dynamic> trackData) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final currentLocation = _currentLocation;
+    if (user == null || currentLocation == null) return false;
+
+    String fcmToken = '';
+    try {
+      fcmToken = await FirebaseMessaging.instance
+              .getToken()
+              .timeout(const Duration(seconds: 3)) ??
+          '';
+    } catch (e) {
+      // Messaging availability must not prevent nearby-listener discovery.
+      debugPrint('Messaging token unavailable: $e');
+    }
+    if (!mounted ||
+        _profileOpen ||
+        FirebaseAuth.instance.currentUser?.uid != user.uid) {
+      return false;
+    }
+
+    final userSnapshot = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    if (!mounted ||
+        _profileOpen ||
+        FirebaseAuth.instance.currentUser?.uid != user.uid) {
+      return false;
+    }
+    final userData = userSnapshot.data() ?? {};
+    await FirebaseFirestore.instance
+        .collection('listening_data')
+        .doc(user.uid)
+        .set({
+      'userId': user.uid,
+      'song': trackData['song'],
+      'fcmToken': fcmToken,
+      'songId': trackData['songId'],
+      'artistName': trackData['artistName'],
+      'previewUrl': trackData['previewUrl'],
+      'name': userData['name'] ?? 'Unknown User',
+      'likes': normalizedDailyLikes(userData['likes']),
+      'imageUrl': trackData['imageUrl'],
+      'geo': GeoFirePoint(
+        GeoPoint(currentLocation.latitude!, currentLocation.longitude!),
+      ).data,
+      'timestamp': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    return mounted &&
+        !_profileOpen &&
+        FirebaseAuth.instance.currentUser?.uid == user.uid;
   }
 
   void _startNearbyUsersSubscription() {
-    if (_currentLocation == null) return;
-
-    _isSubscriptionActive = true; // Mark the subscription as active
     final currentUser = FirebaseAuth.instance.currentUser;
-
-    final geoCollection = GeoCollectionReference(FirebaseFirestore.instance.collection('listening_data'));
+    if (!mounted ||
+        _profileOpen ||
+        _currentLocation == null ||
+        currentUser == null) {
+      return;
+    }
+    final version = _subscriptionVersion;
+    final geoCollection = GeoCollectionReference(
+      FirebaseFirestore.instance.collection('listening_data'),
+    );
     _subscription = geoCollection
         .subscribeWithin(
       center: GeoFirePoint(
@@ -156,107 +217,116 @@ class _HomePageState extends State<HomePage> {
       ),
       radiusInKm: 0.5,
       field: 'geo',
-      geopointFrom: (data) {
-        final geoPoint = (data['geo']['geopoint'] as GeoPoint);
-        return GeoPoint(geoPoint.latitude, geoPoint.longitude);
-      },
+      geopointFrom: (data) => data['geo']['geopoint'] as GeoPoint,
       strictMode: true,
     )
         .listen((List<DocumentSnapshot<Map<String, dynamic>>> results) {
+      if (!mounted ||
+          version != _subscriptionVersion ||
+          FirebaseAuth.instance.currentUser?.uid != currentUser.uid) {
+        return;
+      }
       final now = DateTime.now();
       final users = results
           .map((doc) {
             final data = doc.data();
-            if (data == null) return {};
-            if (data['userId'] == currentUser?.uid) return null;
-            final timestamp = data['timestamp'] as Timestamp?;
-            if (timestamp == null || now.difference(timestamp.toDate()).inSeconds > 180) {
-              return null; // Exclude data older than 180 seconds
-            }
-
-            final today = DateTime.now();
-            final formattedDate = '${today.year}-${today.month}-${today.day}';
-
-
-            // Valid data
-            return {
-              'userId': doc.id,
-              'song': data['song'],
-              'artistName': data['artistName'],
-              'previewUrl': data['previewUrl'],
-              'imageUrl': data['imageUrl'],
-              'fcmToken': data['fcmToken'],
-              'name': data['name'],
-              'likes': data['likes']?[formattedDate] ?? 0 
-            };
+            final timestamp = data?['timestamp'];
+            return discoveryListener(
+              userId: doc.id,
+              data: data,
+              currentUserId: currentUser.uid,
+              now: now,
+              updatedAt: timestamp is Timestamp ? timestamp.toDate() : null,
+            );
           })
-          .where((user) => user != null)
-          .toList(); // Remove nulls
-
-      setState(() {
-        nearbyUsers = users.cast<Map<String, dynamic>>();
-      });
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      users.sort((a, b) => (b['likes'] as num).compareTo(a['likes'] as num));
+      setState(() => nearbyUsers = users);
+    }, onError: (Object error) {
+      if (!mounted || version != _subscriptionVersion) return;
+      _stopNearbyUsersSubscription();
+      debugPrint('Error discovering nearby listeners: $error');
     });
   }
 
   Future<void> _updateCurrentlyPlaying() async {
-    if (_currentLocation == null) return;
-
+    if (!mounted ||
+        _profileOpen ||
+        _currentLocation == null ||
+        FirebaseAuth.instance.currentUser == null) {
+      return;
+    }
     try {
       final response = await http.get(
         Uri.parse('https://api.spotify.com/v1/me/player/currently-playing'),
         headers: {'Authorization': 'Bearer ${widget.accessToken}'},
-      );
-
-      print('Getting the current playing');
-      print(response.statusCode);
-      print(response.body);
-      if (response.statusCode == 200 && response.body.isNotEmpty) {
-        final data = json.decode(response.body);
-        final track = data['item'];
-        final playing = data['is_playing'];
-
-        if (track != null && playing == true) {
-          print('setting true');
-          setState(() {
-            isSpotifyPlaying = true;
-          });
-          await _updateListeningData({
-            'song': track['name'],
-            'songId': track['id'],
-            'artistName': track['artists'][0]['name'],
-            'previewUrl': track['preview_url'],
-            'imageUrl': track['album']['images'][0]['url'],
-          });
-          if (!_isSubscriptionActive) {
-            print('starting the subscription');
-            _startNearbyUsersSubscription();
-          }
-        } else {
-          print('setting false');
-          setState(() {
-            isSpotifyPlaying = false;
-          });
-          if (_isSubscriptionActive) {
-            _subscription?.cancel();
-            _isSubscriptionActive = false;
-          }
-        }
-      } else {
-        print('setting false');
-        setState(() {
-          isSpotifyPlaying = false;
-        });
+      ).timeout(const Duration(seconds: 20));
+      if (!mounted ||
+          _profileOpen ||
+          FirebaseAuth.instance.currentUser == null) {
+        return;
       }
-    } catch (e) {
-      setState(() {
-        isSpotifyPlaying = false;
+      if (response.statusCode == 401) {
+        _spotifySessionExpired = true;
+        _refreshTimer?.cancel();
+        _stopListening();
+        return;
+      }
+      if (response.statusCode != 200 || response.body.isEmpty) {
+        _stopListening();
+        return;
+      }
+      final data = json.decode(response.body);
+      final track = data['item'];
+      if (track == null || data['is_playing'] != true) {
+        _stopListening();
+        return;
+      }
+      final published = await _updateListeningData({
+        'song': track['name'],
+        'songId': track['id'],
+        'artistName': track['artists'][0]['name'],
+        'previewUrl': track['preview_url'],
+        'imageUrl': (track['album']['images'] as List).isEmpty
+            ? ''
+            : track['album']['images'][0]['url'],
       });
-      debugPrint('Error updating current track: ${e.toString()}');
+      if (!published || !mounted || _profileOpen) return;
+      setState(() => isSpotifyPlaying = true);
+      _startNearbyUsersSubscription();
+    } catch (e) {
+      _stopListening();
+      debugPrint('Error updating current track: $e');
     }
   }
 
-  void navigateToSuperLikePage(BuildContext context, Map<String, dynamic> superLikeData) async {
+  void _reconnectSpotify() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+          builder: (_) => const SpotifyAuthPage(forceReconnect: true)),
+      (_) => false,
+    );
+  }
+
+  Future<void> _openProfile() async {
+    if (_profileOpen) return;
+    _profileOpen = true;
+    _stopNearbyUsersSubscription();
+    // Let an already dispatched publication settle without making Profile
+    // inaccessible offline. The profile guard prevents any new publication.
+    await _refreshFuture?.timeout(const Duration(seconds: 3), onTimeout: () {});
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ProfilePage()),
+    );
+    _profileOpen = false;
+    if (mounted) await _refreshListening();
+  }
+
+  void navigateToSuperLikePage(
+      BuildContext context, Map<String, dynamic> superLikeData) async {
     // Navigate to a page displaying the super like
     await Navigator.push(
       context,
@@ -266,34 +336,60 @@ class _HomePageState extends State<HomePage> {
     );
 
     // Delete the super like record and the image after viewing
-    await FirebaseFirestore.instance.collection('super_likes').doc(superLikeData['id']).delete();
+    await FirebaseFirestore.instance
+        .collection('super_likes')
+        .doc(superLikeData['id'])
+        .delete();
 
     // Refresh the listener
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
-  void navigateToSongInteractionPage(BuildContext context, String username, String songTitle, String imageUrl, String fcmToken, String userId, String artistName) {
+  void navigateToSongInteractionPage(
+      BuildContext context,
+      String username,
+      String songTitle,
+      String imageUrl,
+      String fcmToken,
+      String userId,
+      String artistName) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => SongInteractionPage(username: username, songTitle: songTitle, imageUrl: imageUrl, fcmToken: fcmToken, userId: userId, artistName: artistName),
+        builder: (context) => SongInteractionPage(
+            username: username,
+            songTitle: songTitle,
+            imageUrl: imageUrl,
+            fcmToken: fcmToken,
+            userId: userId,
+            artistName: artistName),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    Widget noSpotifyWidget = const Center(
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUserId == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    Widget noSpotifyWidget = Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.music_off, size: 50, color: Colors.grey),
-          SizedBox(height: 10),
+          const Icon(Icons.music_off, size: 50, color: Colors.grey),
+          const SizedBox(height: 10),
           Text(
-            'Please play a song on Spotify to see nearby listeners',
+            _spotifySessionExpired
+                ? 'Reconnect to Spotify to see nearby listeners'
+                : 'Please play a song on Spotify to see nearby listeners',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, color: Colors.grey),
+            style: const TextStyle(fontSize: 16, color: Colors.grey),
           ),
+          if (_spotifySessionExpired)
+            TextButton(
+                onPressed: _reconnectSpotify,
+                child: const Text('Reconnect to Spotify')),
         ],
       ),
     );
@@ -306,9 +402,8 @@ class _HomePageState extends State<HomePage> {
             icon: const Icon(Icons.refresh),
             onPressed: () async {
               setState(() => isLoading = true);
-              await _getCurrentLocation();
-              await _updateCurrentlyPlaying();
-              setState(() => isLoading = false);
+              await _refreshListening();
+              if (mounted) setState(() => isLoading = false);
             },
           ),
         ],
@@ -323,20 +418,27 @@ class _HomePageState extends State<HomePage> {
               children: [
                 // Likes container
                 StreamBuilder<DocumentSnapshot>(
-                  stream: FirebaseFirestore.instance.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).snapshots(),
+                  stream: FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(currentUserId)
+                      .snapshots(),
                   builder: (context, snapshot) {
                     if (snapshot.hasData && snapshot.data!.exists) {
-                      final userData = snapshot.data!.data() as Map<String, dynamic>?;
+                      final userData =
+                          snapshot.data!.data() as Map<String, dynamic>?;
                       final today = DateTime.now();
-                      final formattedDate = '${today.year}-${today.month}-${today.day}';
-                      final likes = userData?['likes']?[formattedDate] ?? 0;
+                      final formattedDate =
+                          '${today.year}-${today.month}-${today.day}';
+                      final likes =
+                          dailyLikeCount(userData?['likes'], formattedDate);
 
                       return GestureDetector(
                         onTap: () {
                           // Handle likes container tap
                         },
                         child: Stack(
-                          clipBehavior: Clip.none, // Allows positioning outside the widget bounds
+                          clipBehavior: Clip
+                              .none, // Allows positioning outside the widget bounds
                           children: [
                             // Background container
                             Container(
@@ -355,7 +457,8 @@ class _HomePageState extends State<HomePage> {
                               top: -10,
                               right: -10,
                               child: CircleAvatar(
-                                backgroundColor: const Color.fromARGB(255, 81, 64, 124),
+                                backgroundColor:
+                                    const Color.fromARGB(255, 81, 64, 124),
                                 radius: 16,
                                 child: Text(
                                   '$likes',
@@ -371,28 +474,25 @@ class _HomePageState extends State<HomePage> {
                         ),
                       );
                     } else {
-                      return const Center(child: Text('No likes data available'));
+                      return const Center(
+                          child: Text('No likes data available'));
                     }
                   },
                 ),
                 // User Info container
                 StreamBuilder<DocumentSnapshot>(
-                  stream: FirebaseFirestore.instance.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).snapshots(),
+                  stream: FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(currentUserId)
+                      .snapshots(),
                   builder: (context, snapshot) {
                     if (snapshot.hasData && snapshot.data!.exists) {
-                      final userData = snapshot.data!.data() as Map<String, dynamic>?;
+                      final userData =
+                          snapshot.data!.data() as Map<String, dynamic>?;
                       final username = userData?['name'] ?? 'User';
 
                       return GestureDetector(
-                        onTap: () {
-                          // Navigate to profile page
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const ProfilePage(),
-                            ),
-                          );
-                        },
+                        onTap: _openProfile,
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
@@ -402,16 +502,19 @@ class _HomePageState extends State<HomePage> {
                             children: [
                               Text(
                                 username,
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                style: const TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(width: 8),
-                              const Icon(Icons.person, size: 32, color: Colors.black),
+                              const Icon(Icons.person,
+                                  size: 32, color: Colors.black),
                             ],
                           ),
                         ),
                       );
                     } else {
-                      return const Center(child: Text('No user data available'));
+                      return const Center(
+                          child: Text('No user data available'));
                     }
                   },
                 ),
@@ -428,30 +531,31 @@ class _HomePageState extends State<HomePage> {
                         : ListView.builder(
                             itemCount: nearbyUsers.length,
                             itemBuilder: (context, index) {
-                              // Sort the users by likes (most likes on top)
-                              nearbyUsers.sort((a, b) {
-                                final likesA = a['likes'] ?? 0;
-                                final likesB = b['likes'] ?? 0;
-                                return likesB.compareTo(likesA); // Descending order
-                              });
-
                               final user = nearbyUsers[index];
-                             
+
                               return Padding(
                                 padding: const EdgeInsets.all(8.0),
                                 child: GestureDetector(
                                   onTap: () => navigateToSongInteractionPage(
-                                      context, user['name'], user['song'], user['imageUrl'], user['fcmToken'], user['userId'], user['artistName']),
+                                      context,
+                                      user['name'],
+                                      user['song'],
+                                      user['imageUrl'],
+                                      user['fcmToken'],
+                                      user['userId'],
+                                      user['artistName']),
                                   child: Container(
                                     margin: const EdgeInsets.only(bottom: 16.0),
                                     decoration: BoxDecoration(
-                                      color: const Color.fromARGB(255, 81, 64, 124), // Purple container background
+                                      color: const Color.fromARGB(255, 81, 64,
+                                          124), // Purple container background
                                       borderRadius: BorderRadius.circular(20),
                                       boxShadow: [
                                         BoxShadow(
                                           color: Colors.black.withOpacity(0.2),
                                           blurRadius: 3,
-                                          offset: const Offset(0, 5), // Shadow position
+                                          offset: const Offset(
+                                              0, 5), // Shadow position
                                         ),
                                       ],
                                     ),
@@ -463,7 +567,8 @@ class _HomePageState extends State<HomePage> {
                                             topLeft: Radius.circular(20),
                                             bottomLeft: Radius.circular(20),
                                           ),
-                                          child: user['imageUrl'] != null
+                                          child: (user['imageUrl'] as String)
+                                                  .isNotEmpty
                                               ? Image.network(
                                                   user['imageUrl'],
                                                   width: 100,
@@ -486,10 +591,12 @@ class _HomePageState extends State<HomePage> {
                                           child: Padding(
                                             padding: const EdgeInsets.all(16.0),
                                             child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
                                                 Text(
-                                                  user['song'] ?? 'Unknown Song',
+                                                  user['song'] ??
+                                                      'Unknown Song',
                                                   style: const TextStyle(
                                                     fontSize: 16,
                                                     fontWeight: FontWeight.bold,
@@ -498,13 +605,16 @@ class _HomePageState extends State<HomePage> {
                                                 ),
                                                 const SizedBox(height: 4),
                                                 Text(
-                                                  user['artistName'] ?? 'Unknown Artist',
+                                                  user['artistName'] ??
+                                                      'Unknown Artist',
                                                   style: const TextStyle(
                                                     fontSize: 12,
                                                     color: Colors.white70,
                                                   ),
-                                                  maxLines: 2, // Limit to 2 lines
-                                                  overflow: TextOverflow.ellipsis, //
+                                                  maxLines:
+                                                      2, // Limit to 2 lines
+                                                  overflow:
+                                                      TextOverflow.ellipsis, //
                                                 ),
                                               ],
                                             ),
@@ -512,7 +622,8 @@ class _HomePageState extends State<HomePage> {
                                         ),
                                         // Likes count
                                         Padding(
-                                          padding: const EdgeInsets.only(right: 16.0),
+                                          padding: const EdgeInsets.only(
+                                              right: 16.0),
                                           child: CircleAvatar(
                                             backgroundColor: Colors.black,
                                             radius: 16,

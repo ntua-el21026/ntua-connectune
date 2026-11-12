@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:listen_around/auth/login.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({Key? key}) : super(key: key);
@@ -27,7 +28,7 @@ class _ProfilePageState extends State<ProfilePage> {
           .doc(user.uid)
           .get();
       final userData = snapshot.data();
-      if (userData != null) {
+      if (userData != null && mounted) {
         setState(() {
           nameController.text = userData['name'] ?? '';
           emailController.text = user.email ?? '';
@@ -43,6 +44,7 @@ class _ProfilePageState extends State<ProfilePage> {
           .collection('users')
           .doc(user.uid)
           .update({'name': nameController.text.trim()});
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Name updated successfully!')),
       );
@@ -50,20 +52,68 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _logout() async {
-    await FirebaseAuth.instance.signOut();
-    Navigator.popUntil(context, ModalRoute.withName('/')); // Navigate to the login screen
+    var presenceCleared = true;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
+        // Retain interactions; discovery excludes a presence without a timestamp.
+        await FirebaseFirestore.instance
+            .collection('listening_data')
+            .doc(user.uid)
+            .set({'timestamp': null}, SetOptions(merge: true)).timeout(
+                const Duration(seconds: 3));
+      } catch (_) {
+        // An unavailable backend must not prevent local sign-out. The existing
+        // 180-second freshness filter still expires the last published presence.
+        presenceCleared = false;
+      }
+    }
+    try {
+      await FirebaseAuth.instance.signOut();
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+        (_) => false,
+      );
+      if (!presenceCleared) {
+        messenger.showSnackBar(const SnackBar(
+          content: Text(
+              'Signed out. Nearby presence may remain for up to 3 minutes.'),
+        ));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not log out. Please try again.')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Profile'),),
-      backgroundColor: const Color.fromARGB(255, 81, 64, 124), // Purple background
+      appBar: AppBar(
+        title: const Text('Profile'),
+      ),
+      backgroundColor:
+          const Color.fromARGB(255, 81, 64, 124), // Purple background
       body: Center(
         child: SingleChildScrollView(
           child: Column(
             children: [
-              const Icon(Icons.person_pin,color: Colors.white, size: 80.0,),
+              const Icon(
+                Icons.person_pin,
+                color: Colors.white,
+                size: 80.0,
+              ),
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Container(
@@ -83,7 +133,8 @@ class _ProfilePageState extends State<ProfilePage> {
                           labelText: 'Name',
                           filled: true,
                           fillColor: const Color.fromARGB(255, 134, 126, 151),
-                          labelStyle: const TextStyle(color: Colors.black), // Label color
+                          labelStyle: const TextStyle(
+                              color: Colors.black), // Label color
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(30),
                             borderSide: BorderSide.none,
@@ -91,7 +142,8 @@ class _ProfilePageState extends State<ProfilePage> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(30),
                             borderSide: const BorderSide(
-                                color: Colors.deepPurple, width: 2), // Focus border color
+                                color: Colors.deepPurple,
+                                width: 2), // Focus border color
                           ),
                           contentPadding: const EdgeInsets.symmetric(
                               vertical: 15, horizontal: 20),
@@ -105,7 +157,8 @@ class _ProfilePageState extends State<ProfilePage> {
                           labelText: 'Email',
                           filled: true,
                           fillColor: const Color.fromARGB(255, 134, 126, 151),
-                          labelStyle: const TextStyle(color: Colors.black), // Label color
+                          labelStyle: const TextStyle(
+                              color: Colors.black), // Label color
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(30),
                             borderSide: BorderSide.none,
@@ -113,7 +166,8 @@ class _ProfilePageState extends State<ProfilePage> {
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(30),
                             borderSide: const BorderSide(
-                                color: Colors.deepPurple, width: 2), // Focus border color
+                                color: Colors.deepPurple,
+                                width: 2), // Focus border color
                           ),
                           contentPadding: const EdgeInsets.symmetric(
                               vertical: 15, horizontal: 20),

@@ -19,28 +19,37 @@ class _SignUpPageState extends State<SignUpPage> {
   String errorMessage = '';
 
   Future<void> _signUp() async {
+    final name = nameController.text.trim();
+    final surname = surnameController.text.trim();
+    final phoneNumber = phoneController.text.trim();
     try {
-      UserCredential cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      UserCredential cred =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+        password: passwordController.text,
       );
       User? user = cred.user;
 
       if (user != null) {
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'email': user.email,
-          'name': nameController.text.trim(),
-          'surname': surnameController.text.trim(),
-          'phoneNumber': phoneController.text.trim(),
+          'name': name,
+          'surname': surname,
+          'phoneNumber': phoneNumber,
+          'likes': <String, dynamic>{},
           'role': 'passenger', // default role for signups
         });
 
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SpotifyAuthPage()));
+        if (!mounted) return;
+        Navigator.pushReplacement(context,
+            MaterialPageRoute(builder: (context) => const SpotifyAuthPage()));
       }
     } catch (e) {
+      if (!mounted) return;
       final errorParts = e.toString().split(']');
       setState(() {
-        errorMessage = errorParts.length > 1 ? errorParts.last.trim() : e.toString();
+        errorMessage =
+            errorParts.length > 1 ? errorParts.last.trim() : e.toString();
       });
     }
   }
@@ -88,16 +97,20 @@ class _SignUpPageState extends State<SignUpPage> {
                         labelText: 'Name',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -109,16 +122,20 @@ class _SignUpPageState extends State<SignUpPage> {
                         labelText: 'Surname',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -130,16 +147,20 @@ class _SignUpPageState extends State<SignUpPage> {
                         labelText: 'Phone Number',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -151,16 +172,20 @@ class _SignUpPageState extends State<SignUpPage> {
                         labelText: 'Email',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -173,16 +198,20 @@ class _SignUpPageState extends State<SignUpPage> {
                         labelText: 'Password',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -195,9 +224,11 @@ class _SignUpPageState extends State<SignUpPage> {
                           borderRadius: BorderRadius.circular(30),
                         ),
                         backgroundColor: const Color(0xFF6A5ACD),
-                        padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 60),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 60),
                       ),
-                      child: const Text('Sign Up', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      child: const Text('Sign Up',
+                          style: TextStyle(fontSize: 16, color: Colors.white)),
                     ),
                     if (errorMessage.isNotEmpty)
                       Padding(

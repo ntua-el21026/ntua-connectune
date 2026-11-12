@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'signup.dart';
+import 'forgot_pass.dart';
 import 'package:listen_around/spotify.dart';
 
 class LoginPage extends StatefulWidget {
@@ -19,13 +20,17 @@ class _LoginPageState extends State<LoginPage> {
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+        password: passwordController.text,
       );
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const SpotifyAuthPage()));
+      if (!mounted) return;
+      Navigator.pushReplacement(context,
+          MaterialPageRoute(builder: (context) => const SpotifyAuthPage()));
     } catch (e) {
+      if (!mounted) return;
       final errorParts = e.toString().split(']');
       setState(() {
-        errorMessage = errorParts.length > 1 ? errorParts.last.trim() : e.toString();
+        errorMessage =
+            errorParts.length > 1 ? errorParts.last.trim() : e.toString();
       });
     }
   }
@@ -70,16 +75,20 @@ class _LoginPageState extends State<LoginPage> {
                         labelText: 'Email',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -92,16 +101,20 @@ class _LoginPageState extends State<LoginPage> {
                         labelText: 'Password',
                         filled: true,
                         fillColor: const Color.fromARGB(255, 134, 126, 151),
-                        labelStyle: const TextStyle(color: Colors.white), // Label color
+                        labelStyle:
+                            const TextStyle(color: Colors.white), // Label color
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
                           borderSide: BorderSide.none,
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(30),
-                          borderSide: const BorderSide(color: Colors.deepPurple, width: 2), // Focus border color
+                          borderSide: const BorderSide(
+                              color: Colors.deepPurple,
+                              width: 2), // Focus border color
                         ),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+                        contentPadding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 20),
                         // Shadow effect
                         isDense: false,
                       ),
@@ -114,9 +127,11 @@ class _LoginPageState extends State<LoginPage> {
                           borderRadius: BorderRadius.circular(30),
                         ),
                         backgroundColor: const Color(0xFF6A5ACD),
-                        padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 80),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 15, horizontal: 80),
                       ),
-                      child: const Text('Login', style: TextStyle(fontSize: 16, color: Colors.white)),
+                      child: const Text('Login',
+                          style: TextStyle(fontSize: 16, color: Colors.white)),
                     ),
                     if (errorMessage.isNotEmpty)
                       Padding(
@@ -128,8 +143,19 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     const Divider(),
                     TextButton(
-                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SignUpPage())),
-                      child: const Text('Create an Account', style: TextStyle(color: Colors.blue)),
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const ForgotPasswordPage())),
+                      child: const Text('Forgot Password?'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const SignUpPage())),
+                      child: const Text('Create an Account',
+                          style: TextStyle(color: Colors.blue)),
                     ),
                   ],
                 ),

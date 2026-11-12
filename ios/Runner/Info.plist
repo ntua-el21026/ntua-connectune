@@ -33,6 +33,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>ConnecTune uses your location to find nearby listeners while you use the app.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ConnecTune uses the camera to take a photo for a super like.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

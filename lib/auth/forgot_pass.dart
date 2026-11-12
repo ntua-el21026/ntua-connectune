@@ -17,10 +17,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       await FirebaseAuth.instance.sendPasswordResetEmail(
         email: emailController.text.trim(),
       );
+      if (!mounted) return;
       setState(() {
         message = 'Password reset email sent. Check your email.';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         message = e.toString();
       });
@@ -41,9 +43,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email')),
+            TextField(
+                controller: emailController,
+                decoration: const InputDecoration(labelText: 'Email')),
             const SizedBox(height: 20),
-            ElevatedButton(onPressed: _resetPassword, child: const Text('Reset Password')),
+            ElevatedButton(
+                onPressed: _resetPassword, child: const Text('Reset Password')),
             const SizedBox(height: 20),
             Text(message),
           ],
