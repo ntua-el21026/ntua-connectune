@@ -12,7 +12,8 @@ import 'package:vibration/vibration.dart';
 
 class SuperLikeInteractionPage extends StatefulWidget {
   final String userId;
-  final String superLikeSenderId; // The user ID of the person who sent the superlike
+  final String
+      superLikeSenderId; // The user ID of the person who sent the superlike
 
   const SuperLikeInteractionPage({
     Key? key,
@@ -21,7 +22,8 @@ class SuperLikeInteractionPage extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _SuperLikeInteractionPageState createState() => _SuperLikeInteractionPageState();
+  _SuperLikeInteractionPageState createState() =>
+      _SuperLikeInteractionPageState();
 }
 
 class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
@@ -41,15 +43,20 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
     _listeningDataFuture = _fetchListeningData();
   }
 
-  void _vibrate() {
-    Vibration.vibrate();
+  Future<void> _vibrate() async {
+    try {
+      await Vibration.vibrate();
+    } catch (_) {
+      // An unavailable haptic device must not undo a recorded interaction.
+    }
   }
 
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        duration: const Duration(seconds: 2), // Duration the message is displayed
+        duration:
+            const Duration(seconds: 2), // Duration the message is displayed
       ),
     );
   }
@@ -58,15 +65,23 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
     final currentUserId = FirebaseAuth.instance.currentUser!.uid;
 
     // Fetch the listening data of the user who sent the superlike
-    final senderSnapshot = await FirebaseFirestore.instance.collection('listening_data').doc(widget.userId).get();
+    final senderSnapshot = await FirebaseFirestore.instance
+        .collection('listening_data')
+        .doc(widget.userId)
+        .get();
 
     // Fetch the listening data of the current user
-    final currentUserSnapshot = await FirebaseFirestore.instance.collection('listening_data').doc(currentUserId).get();
+    final currentUserSnapshot = await FirebaseFirestore.instance
+        .collection('listening_data')
+        .doc(currentUserId)
+        .get();
 
     if (senderSnapshot.exists && currentUserSnapshot.exists) {
       return {
-        'senderData': senderSnapshot.data(), // Data for the user who sent the superlike
-        'currentUserData': currentUserSnapshot.data(), // Data for the current user
+        'senderData':
+            senderSnapshot.data(), // Data for the user who sent the superlike
+        'currentUserData':
+            currentUserSnapshot.data(), // Data for the current user
       };
     }
     return null;
@@ -81,7 +96,8 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
     });
   }
 
-  void _handleRotationEnd(DragEndDetails details, String username, String fcmToken, String songTitle) {
+  void _handleRotationEnd(DragEndDetails details, String username,
+      String fcmToken, String songTitle) {
     if (!_isRotating) return;
 
     setState(() {
@@ -99,92 +115,86 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
     });
   }
 
-  void _like(String username, String fcmToken, String songTitle) async {
-    print('Like registered for $username');
-
-    final notificationSent = await FCMService.sendNotification(
-      token: fcmToken,
-      title: 'You got a new Like!',
-      body: 'Someone liked your song $songTitle!',
-      data: {
-        'type': 'like',
-        'songTitle': songTitle,
-      },
-    );
-
-    final today = DateTime.now();
-    final formattedDate = '${today.year}-${today.month}-${today.day}';
-
-    await FirebaseFirestore.instance.collection('users').doc(widget.userId).set({
-      'likes': {
-        formattedDate: FieldValue.increment(1),
-      }
-    }, SetOptions(merge: true));
-
-    _vibrate();
-
-    // Show the SnackBar
-    _showSnackBar(notificationSent
-        ? 'Like recorded; notification accepted.'
-        : 'Like recorded. Notifications require a trusted server.');
+  Future<void> _like(String username, String fcmToken, String songTitle) async {
+    try {
+      final result = await recordInteractionAndNotify(
+          record: () async {
+            if (FirebaseAuth.instance.currentUser == null)
+              throw StateError('Sign-in required');
+            final today = DateTime.now();
+            final date = '${today.year}-${today.month}-${today.day}';
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(widget.userId)
+                .set({
+              'likes': {date: FieldValue.increment(1)},
+            }, SetOptions(merge: true));
+          },
+          notify: () => FCMService.sendNotification(
+              recipientUserId: widget.userId, type: 'like'));
+      if (!mounted) return;
+      _vibrate();
+      _showSnackBar(notificationOutcome('Like', result));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasLiked = false);
+      _showSnackBar('Like could not be recorded. Please try again.');
+    }
   }
 
   Future<void> _superLike(String songTitle, String fcmToken) async {
     try {
-      final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
-      if (photo != null) {
-        setState(() {
-          _capturedImage = File(photo.path);
-        });
-
-        final imageUrl = await _uploadImageToFirebase(_capturedImage!);
-
-        await FirebaseFirestore.instance.collection('listening_data').doc(widget.userId).update({
-          'superlikes': FieldValue.arrayUnion([
-            {
-              'from': FirebaseAuth.instance.currentUser!.uid,
-              'fromName': FirebaseAuth.instance.currentUser!.displayName,
-              'imageUrl': imageUrl,
-            }
-          ]),
-        });
-
-        final today = DateTime.now();
-        final formattedDate = '${today.year}-${today.month}-${today.day}';
-
-        await FirebaseFirestore.instance.collection('users').doc(widget.userId).set({
-          'likes': {
-            formattedDate: FieldValue.increment(1),
-          }
-        }, SetOptions(merge: true));
-
-        final notificationSent = await FCMService.sendNotification(
-          token: fcmToken,
-          title: 'You got a Super Like!',
-          body: 'Someone super liked your song $songTitle!',
-          data: {
-            'type': 'superlike',
-            'userId': FirebaseAuth.instance.currentUser!.uid,
-          },
-        );
-        _vibrate();
-
-        // Show the SnackBar
-        _showSnackBar(notificationSent
-            ? 'Super Like recorded; notification accepted.'
-            : 'Super Like recorded. Notifications require a trusted server.');
-      } else {
-        setState(() {
-          _hasSuperLiked = false;
-        });
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw StateError('Sign-in required');
+      final photo = await _picker.pickImage(source: ImageSource.camera);
+      if (!mounted) return;
+      if (photo == null) {
+        setState(() => _hasSuperLiked = false);
+        return;
       }
-    } catch (e) {
-      debugPrint('Error sending superlike: $e');
+      setState(() => _capturedImage = File(photo.path));
+      final imageUrl = await _uploadImageToFirebase(_capturedImage!);
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != user.uid)
+        return;
+      final today = DateTime.now();
+      final date = '${today.year}-${today.month}-${today.day}';
+      final result = await recordInteractionAndNotify(
+          record: () async {
+            final db = FirebaseFirestore.instance;
+            final batch = db.batch();
+            batch.update(db.collection('listening_data').doc(widget.userId), {
+              'superlikes': FieldValue.arrayUnion([
+                {
+                  'from': user.uid,
+                  'fromName': user.displayName,
+                  'imageUrl': imageUrl,
+                }
+              ]),
+            });
+            batch.set(
+                db.collection('users').doc(widget.userId),
+                {
+                  'likes': {date: FieldValue.increment(1)},
+                },
+                SetOptions(merge: true));
+            await batch.commit();
+          },
+          notify: () => FCMService.sendNotification(
+              recipientUserId: widget.userId, type: 'superlike'));
+      if (!mounted) return;
+      _vibrate();
+      _showSnackBar(notificationOutcome('Super Like', result));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasSuperLiked = false);
+      _showSnackBar('Super Like could not be recorded. Please try again.');
     }
   }
 
   Future<String> _uploadImageToFirebase(File image) async {
-    final storageRef = FirebaseStorage.instance.ref().child('super_likes/${DateTime.now().millisecondsSinceEpoch}.jpg');
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('super_likes/${DateTime.now().millisecondsSinceEpoch}.jpg');
     final uploadTask = storageRef.putFile(image);
     final snapshot = await uploadTask;
     final downloadUrl = await snapshot.ref.getDownloadURL();
@@ -207,8 +217,10 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
           }
 
           final data = snapshot.data!;
-          final senderData = data['senderData'] ?? {}; // Listening data of the user who sent the superlike
-          final currentUserData = data['currentUserData'] ?? {}; // Listening data of the current user
+          final senderData = data['senderData'] ??
+              {}; // Listening data of the user who sent the superlike
+          final currentUserData = data['currentUserData'] ??
+              {}; // Listening data of the current user
 
           // Extract details for the sender's listening data
           final songTitle = senderData['song'] ?? 'Unknown Song';
@@ -218,7 +230,8 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
           final artistName = senderData['artistName'] ?? '';
 
           // Extract the superlikes from the current user's listening data
-          final superlikes = (currentUserData['superlikes'] ?? []) as List<dynamic>;
+          final superlikes =
+              (currentUserData['superlikes'] ?? []) as List<dynamic>;
           final matchingSuperlike = superlikes.firstWhere(
             (superlike) => superlike['from'] == widget.userId,
             orElse: () => null,
@@ -264,7 +277,8 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
                         ),
                         child: Text(
                           username,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 18),
                         ),
                       ),
                     ),
@@ -326,8 +340,10 @@ class _SuperLikeInteractionPageState extends State<SuperLikeInteractionPage> {
                 ),
                 Expanded(
                   child: GestureDetector(
-                    onPanUpdate: (details) => _handleRotation(_rotation + details.delta.dx),
-                    onPanEnd: (details) => _handleRotationEnd(details, username, fcmToken, songTitle),
+                    onPanUpdate: (details) =>
+                        _handleRotation(_rotation + details.delta.dx),
+                    onPanEnd: (details) => _handleRotationEnd(
+                        details, username, fcmToken, songTitle),
                     child: Stack(
                       alignment: Alignment.center,
                       children: [

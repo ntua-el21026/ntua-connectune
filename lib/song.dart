@@ -41,7 +41,8 @@ class _SongInteractionPageState extends State<SongInteractionPage> {
   bool _isRotating = false;
 
   void _handleRotation(double angle) {
-    if (_hasLiked || _hasSuperLiked) return; // Prevent further actions if already liked
+    if (_hasLiked || _hasSuperLiked)
+      return; // Prevent further actions if already liked
 
     setState(() {
       _isRotating = true;
@@ -49,21 +50,28 @@ class _SongInteractionPageState extends State<SongInteractionPage> {
     });
   }
 
-  void _vibrate() {
-    Vibration.vibrate();
+  Future<void> _vibrate() async {
+    try {
+      await Vibration.vibrate();
+    } catch (_) {
+      // An unavailable haptic device must not undo a recorded interaction.
+    }
   }
 
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        duration: const Duration(seconds: 2), // Duration the message is displayed
+        duration:
+            const Duration(seconds: 2), // Duration the message is displayed
       ),
     );
   }
 
   Future<String> _uploadImageToFirebase(File image) async {
-    final storageRef = FirebaseStorage.instance.ref().child('super_likes/${DateTime.now().millisecondsSinceEpoch}.jpg');
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('super_likes/${DateTime.now().millisecondsSinceEpoch}.jpg');
     final uploadTask = storageRef.putFile(image);
     final snapshot = await uploadTask;
     final downloadUrl = await snapshot.ref.getDownloadURL();
@@ -89,90 +97,79 @@ class _SongInteractionPageState extends State<SongInteractionPage> {
     });
   }
 
-  void _like() async {
-    print('Like registered for ${widget.username}');
-
-    final notificationSent = await FCMService.sendNotification(
-      token: widget.fcmToken,
-      title: 'You got a new Like!',
-      body: 'Someone liked your song ${widget.songTitle}!',
-      data: {
-        'type': 'like',
-        'songTitle': widget.songTitle,
-      },
-    );
-
-    final today = DateTime.now();
-    final formattedDate = '${today.year}-${today.month}-${today.day}';
-
-    await FirebaseFirestore.instance.collection('users').doc(widget.userId).set({
-      'likes': {
-        formattedDate: FieldValue.increment(1),
-      }
-    }, SetOptions(merge: true));
-
-    _vibrate();
-
-    // Show the SnackBar
-    _showSnackBar(notificationSent
-        ? 'Like recorded; notification accepted.'
-        : 'Like recorded. Notifications require a trusted server.');
+  Future<void> _like() async {
+    try {
+      final result = await recordInteractionAndNotify(
+          record: () async {
+            if (FirebaseAuth.instance.currentUser == null)
+              throw StateError('Sign-in required');
+            final today = DateTime.now();
+            final date = '${today.year}-${today.month}-${today.day}';
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(widget.userId)
+                .set({
+              'likes': {date: FieldValue.increment(1)},
+            }, SetOptions(merge: true));
+          },
+          notify: () => FCMService.sendNotification(
+              recipientUserId: widget.userId, type: 'like'));
+      if (!mounted) return;
+      _vibrate();
+      _showSnackBar(notificationOutcome('Like', result));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasLiked = false);
+      _showSnackBar('Like could not be recorded. Please try again.');
+    }
   }
 
   Future<void> _superLike() async {
     try {
-      final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
-      if (photo != null) {
-        setState(() {
-          _capturedImage = File(photo.path);
-        });
-
-        final imageUrl = await _uploadImageToFirebase(_capturedImage!);
-
-        // Add the new superlike to the recipient's listening data
-        await FirebaseFirestore.instance.collection('listening_data').doc(widget.userId).update({
-          'superlikes': FieldValue.arrayUnion([
-            {
-              'from': FirebaseAuth.instance.currentUser!.uid,
-              'fromName': FirebaseAuth.instance.currentUser!.displayName,
-              'imageUrl': imageUrl,
-            }
-          ]),
-        });
-
-        final today = DateTime.now();
-        final formattedDate = '${today.year}-${today.month}-${today.day}';
-
-        await FirebaseFirestore.instance.collection('users').doc(widget.userId).set({
-          'likes': {
-            formattedDate: FieldValue.increment(1),
-          }
-        }, SetOptions(merge: true));
-
-        // Send the notification
-        final notificationSent = await FCMService.sendNotification(
-          token: widget.fcmToken,
-          title: 'You got a Super Like!',
-          body: 'Someone super liked your song ${widget.songTitle}!',
-          data: {
-            'type': 'superlike',
-            'userId': FirebaseAuth.instance.currentUser!.uid, // Include sender ID
-          },
-        );
-
-        _vibrate();
-
-        // Show the SnackBar
-        _showSnackBar(notificationSent
-            ? 'Super Like recorded; notification accepted.'
-            : 'Super Like recorded. Notifications require a trusted server.');
-      } else {
-        setState(() {
-          _hasSuperLiked = false;
-        });
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw StateError('Sign-in required');
+      final photo = await _picker.pickImage(source: ImageSource.camera);
+      if (!mounted) return;
+      if (photo == null) {
+        setState(() => _hasSuperLiked = false);
+        return;
       }
-    } catch (e) {
-      debugPrint('Error sending superlike: $e');
+      setState(() => _capturedImage = File(photo.path));
+      final imageUrl = await _uploadImageToFirebase(_capturedImage!);
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != user.uid)
+        return;
+      final today = DateTime.now();
+      final date = '${today.year}-${today.month}-${today.day}';
+      final result = await recordInteractionAndNotify(
+          record: () async {
+            final db = FirebaseFirestore.instance;
+            final batch = db.batch();
+            batch.update(db.collection('listening_data').doc(widget.userId), {
+              'superlikes': FieldValue.arrayUnion([
+                {
+                  'from': user.uid,
+                  'fromName': user.displayName,
+                  'imageUrl': imageUrl,
+                }
+              ]),
+            });
+            batch.set(
+                db.collection('users').doc(widget.userId),
+                {
+                  'likes': {date: FieldValue.increment(1)},
+                },
+                SetOptions(merge: true));
+            await batch.commit();
+          },
+          notify: () => FCMService.sendNotification(
+              recipientUserId: widget.userId, type: 'superlike'));
+      if (!mounted) return;
+      _vibrate();
+      _showSnackBar(notificationOutcome('Super Like', result));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasSuperLiked = false);
+      _showSnackBar('Super Like could not be recorded. Please try again.');
     }
   }
 
@@ -222,7 +219,8 @@ class _SongInteractionPageState extends State<SongInteractionPage> {
                     ),
                     child: Text(
                       widget.username,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 18),
                     ),
                   ),
                 ),
@@ -253,7 +251,8 @@ class _SongInteractionPageState extends State<SongInteractionPage> {
             ),
             Expanded(
               child: GestureDetector(
-                onPanUpdate: (details) => _handleRotation(_rotation + details.delta.dx),
+                onPanUpdate: (details) =>
+                    _handleRotation(_rotation + details.delta.dx),
                 onPanEnd: _handleRotationEnd,
                 child: Stack(
                   alignment: Alignment.center,

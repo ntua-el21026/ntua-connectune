@@ -7,19 +7,21 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:listen_around/super_like_notification_page.dart';
 import 'dart:convert';
+import 'notification.dart';
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
 
-  const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
-
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
 
   const InitializationSettings initializationSettings = InitializationSettings(
     android: initializationSettingsAndroid,
+    iOS: DarwinInitializationSettings(),
   );
 
   await flutterLocalNotificationsPlugin.initialize(
@@ -30,7 +32,6 @@ Future<void> main() async {
       }
     },
   );
-
 
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
     print('Message opened app');
@@ -47,10 +48,33 @@ Future<void> main() async {
   });
 
   runApp(MyApp());
+  WidgetsBinding.instance
+      .addPostFrameCallback((_) => _openPendingNotification());
+  FirebaseAuth.instance.authStateChanges().listen((user) {
+    if (user == null) {
+      _pendingSender = null;
+    } else {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _openPendingNotification());
+    }
+  });
+  // Cold-start taps arrive separately from onMessageOpenedApp.
+  try {
+    final initial = await FirebaseMessaging.instance.getInitialMessage();
+    if (initial != null) _handleNotificationTap(jsonEncode(initial.data));
+    final localLaunch =
+        await flutterLocalNotificationsPlugin.getNotificationAppLaunchDetails();
+    final payload = localLaunch?.notificationResponse?.payload;
+    if (localLaunch?.didNotificationLaunchApp == true && payload != null)
+      _handleNotificationTap(payload);
+  } catch (_) {
+    debugPrint('Initial notification unavailable');
+  }
 }
 
 Future<void> _showLocalNotification(RemoteMessage message) async {
-  const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
+  const AndroidNotificationDetails androidPlatformChannelSpecifics =
+      AndroidNotificationDetails(
     'superlike_channel', // Channel ID
     'Super Like Notifications', // Channel name
     channelDescription: 'Notifications for super likes',
@@ -59,7 +83,8 @@ Future<void> _showLocalNotification(RemoteMessage message) async {
     enableVibration: true, // Enable vibration
   );
 
-  const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
+  const NotificationDetails platformChannelSpecifics =
+      NotificationDetails(android: androidPlatformChannelSpecifics);
 
   final payload = jsonEncode({
     'type': message.data['type'],
@@ -75,38 +100,64 @@ Future<void> _showLocalNotification(RemoteMessage message) async {
   );
 }
 
-void _handleNotificationTap(String payload) {
-  final Map<String, dynamic> data = jsonDecode(payload);
+String? _pendingSender;
+String? _topRouteName;
 
-  if (data['type'] == 'superlike') {
-    final userId = data['userId'];
-    Navigator.of(MyApp.navigatorKey.currentContext!).push(
-      MaterialPageRoute(
-        builder: (context) => SuperLikeInteractionPage(userId: userId, superLikeSenderId: userId,),
-      ),
-    );
+class _NotificationObserver extends NavigatorObserver {
+  void _changed(Route<dynamic>? route) {
+    _topRouteName = route?.settings.name;
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _openPendingNotification());
   }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _changed(route);
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) =>
+      _changed(previousRoute);
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) =>
+      _changed(newRoute);
 }
 
+void _handleNotificationTap(String payload) {
+  final sender = superLikeSender(payload);
+  if (sender == null || FirebaseAuth.instance.currentUser == null) return;
+  _pendingSender = sender;
+  _openPendingNotification();
+}
+
+void _openPendingNotification() {
+  final navigator = MyApp.navigatorKey.currentState;
+  final sender = _pendingSender;
+  if (navigator == null ||
+      sender == null ||
+      _topRouteName != '/home' ||
+      FirebaseAuth.instance.currentUser == null) return;
+  _pendingSender = null;
+  navigator.push(MaterialPageRoute(
+      builder: (_) =>
+          SuperLikeInteractionPage(userId: sender, superLikeSenderId: sender)));
+}
 
 class MyApp extends StatelessWidget {
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey, // Assign the global key
+      navigatorObservers: [_NotificationObserver()],
 
       title: 'Spotify Locator',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        pageTransitionsTheme: const PageTransitionsTheme(
-      builders: {
-        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-      }
-    )
-      ),
+          primarySwatch: Colors.blue,
+          pageTransitionsTheme: const PageTransitionsTheme(builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          })),
       home: Builder(
         builder: (BuildContext context) {
           User? user = FirebaseAuth.instance.currentUser;

@@ -1,0 +1,16 @@
+{
+  "name": "connectune-notifications",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check index.js && node --check notification-handler.js"
+  },
+  "dependencies": {
+    "firebase-admin": "13.6.1",
+    "firebase-functions": "7.0.5"
+  }
+}
