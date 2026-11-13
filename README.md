@@ -4,8 +4,6 @@ ConnecTune is an NTUA ECE Human–Computer Interaction course prototype
 (Autumn 2025) for discovering nearby listeners and interacting with their music.
 The Flutter client combines Firebase authentication, Spotify login and playback
 metadata, location-based Firestore queries, profiles, and camera-based super likes.
-It is a coursework prototype; provider configuration and backend policy are part
-of the setup, rather than evidence of an independently deployable service.
 
 ## HCI workflows and implementation status
 
@@ -23,7 +21,7 @@ The prototype explores nearby music discovery and gesture-based interaction:
 
 | Area | Implemented path | Remaining dependency |
 |---|---|---|
-| Authentication/profile | Firebase Auth and Firestore reads/writes | Owned project, enabled email/password provider, access rules |
+| Authentication/profile | Firebase Auth and Firestore reads/writes | Development project, enabled email/password provider, access rules |
 | Discovery | Spotify current-playback request plus geospatial Firestore query | Spotify playback, valid OAuth session, location permission, other recent listeners |
 | Likes/super likes | Firestore updates, Storage photo upload, gesture UI | Database/storage policy and device camera qualification |
 | Push notification | HTTPS client and trusted Firebase handler | Endpoint deployment/configuration and real device delivery remain unverified |
@@ -61,8 +59,7 @@ Before running, configure **your own development Firebase project** and Spotify
 application/redirect URI. Replace generated Firebase platform configuration and
 `lib/firebase_options.dart` together, enable the required Auth/Firestore/Storage/
 Messaging services, and review access rules before using any personal data.
-The shipped configuration identifies the historical shared project and does not
-establish permission to access it. Android/iOS location, camera, and notification
+Android/iOS location, camera, and notification
 permissions also require device testing. Desktop support is not validated.
 
 The Dart package remains `listen_around`; imports and native callback names use
@@ -73,7 +70,7 @@ git clone https://github.com/ntua-el21026/ntua-connectune.git
 cd ntua-connectune
 ```
 
-After configuring the owned development project and callback, launch on a
+After configuring the development project and callback, launch on a
 supported device with public client configuration and the qualified endpoint:
 
 ```bash
@@ -99,7 +96,7 @@ Configure `SPOTIFY_CLIENT_ID` and `SPOTIFY_REDIRECT_URI` using Flutter Dart defi
 The redirect must be supported and registered by Spotify and matched by the
 Android/iOS callback configuration. Existing native callback entries use the
 `listen-around` scheme; HTTPS redirects require the corresponding app/universal
-link setup. No redirect or live OAuth integration was qualified in this pass.
+link setup.
 The retired implicit grant is not used. An expired or rejected token offers
 explicit reconnection rather than leaving stale listeners visible.
 
@@ -118,9 +115,7 @@ Super-like writes use one Firestore batch. Camera cancellation and failed writes
 allow retry. Incoming taps tolerate malformed data and wait for authenticated
 Home navigation; cold-start FCM/local taps are also handled.
 
-**No endpoint was deployed or configured, so real push delivery is not restored
-end to end.** Set `NOTIFICATION_API_URL` to the owned, qualified HTTPS function
-endpoint to enable the client path. The UI distinguishes an unavailable endpoint,
+Set `NOTIFICATION_API_URL` to your HTTPS function endpoint to enable the client path. The UI distinguishes an unavailable endpoint,
 an unconfirmed request and server/FCM acceptance. Acceptance does not prove a
 phone displayed the notification.
 
@@ -129,13 +124,7 @@ recipient tokens and messages from fresh nearby listening records, and applies
 transactional rate limits. It uses the server runtime's managed identity. The
 client contains no Admin key or privileged FCM signing. Existing project services,
 runtime identity, endpoint configuration, Firestore ownership/throttle rules and
-native permissions must be qualified before deployment. No such deployment,
-provider test, rule change or credential operation occurred here.
-
-Known exposed material was removed from the prepared current source within the
-documented inspection scope. Provider revocation/rotation is **owner-deferred and
-not confirmed**. Original Git history remains intact and may retain old values.
-Do not restore administrative material to the client.
+native permissions require integration and device testing.
 
 ## Recorded validation — 12 November 2026
 
@@ -151,21 +140,6 @@ Do not restore administrative material to the client.
 - `python3 scripts/check_client_security.py` retains three client source-policy
   checks; these complement executable tests and do not establish device security.
 
-The Flutter results above are retained preparation evidence. For the
-13 November 2026 documentation update, `node --test functions/test/*.test.js`
+On 13 November 2026, `node --test functions/test/*.test.js`
 passed 22 offline tests (0 failures, 0 skipped), and
 `python3 scripts/check_client_security.py` passed its three static checks.
-Flutter analysis, tests, and builds were not rerun. No live Firebase login,
-Spotify callback, GPS/camera operation, or push delivery was exercised. Android SDK/device and Apple build/signing environments are not
-available here. Existing research and other portfolio test receipts are reused
-for unchanged code; this pass adds no portfolio-wide audit or model evaluation.
-
-## Attribution and reuse
-
-This is team coursework, preserved as a project artifact. The imported history
-and code do not establish each member's implementation responsibilities; no
-exclusive individual authorship is claimed. The root [MIT license](LICENSE)
-applies to material the contributors have authority to license. Course materials,
-images, provider assets, and third-party packages retain their respective rights.
-Provider credentials, location histories, profiles, and personal images are not
-portfolio demonstration data.

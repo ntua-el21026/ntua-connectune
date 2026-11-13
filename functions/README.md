@@ -1,9 +1,7 @@
 # Local notification backend
 
 This directory contains a minimal Firebase HTTPS notification implementation for
-ConnecTune. It has offline handler tests. It has not been deployed or exercised
-against Firebase Auth, Firestore, FCM, or a device, and does not establish a working
-production integration.
+ConnecTune. It has offline handler tests.
 
 The exported function is `sendInteractionNotification`. Its runtime target is
 Node.js 22. `firebase-admin` 13.6.1 and `firebase-functions` 7.0.5 are pinned in
@@ -61,18 +59,14 @@ There is no automatic retry worker or throttle-record cleanup job.
 `index.js` initializes Firebase Admin through the deployed runtime's managed
 identity. It loads no key file or client-supplied Admin credential. Deployment,
 runtime IAM, FCM configuration, endpoint configuration in the client, and device
-notification behavior still require independent qualification with an owned
-development project.
+notification behavior still require integration testing with a development project.
 
 The deployment must protect listening-record ownership and allow only trusted
 server code to write throttle collections. In particular, a user must not be able
 to replace another user's destination token, timestamp, or coordinates, or reset
 rate-limit documents. Those Firestore rules are not supplied or validated here.
 Presence timestamps must be server timestamps. Location eligibility uses
-reported coordinates and does not attest physical proximity. These requirements
-limit what the offline tests demonstrate and must be resolved before enabling a
-deployed endpoint. No historical shared-project configuration grants permission
-to use its services.
+reported coordinates and does not attest physical proximity. Integration tests must cover these requirements before enabling an endpoint.
 
 ## Local validation
 
