@@ -7,6 +7,33 @@ metadata, location-based Firestore queries, profiles, and camera-based super lik
 It is a coursework prototype; provider configuration and backend policy are part
 of the setup, rather than evidence of an independently deployable service.
 
+## HCI workflows and implementation status
+
+The prototype explores nearby music discovery and gesture-based interaction:
+
+1. Register or sign in with Firebase email/password authentication; use the
+   password-reset screen when needed.
+2. Connect Spotify, allow location access, and play a track in Spotify. Home
+   requests the current playback metadata, publishes a Firestore listening
+   record, and queries listeners within 0.5 km. Records must be recent; refresh
+   runs on a three-minute timer.
+3. Open a listener's song screen. Rotate the record artwork left to record a
+   like, or right to capture/upload a camera photo and record a super like.
+4. Inspect incoming super-like images, edit the profile name, or sign out.
+
+| Area | Implemented path | Remaining dependency |
+|---|---|---|
+| Authentication/profile | Firebase Auth and Firestore reads/writes | Owned project, enabled email/password provider, access rules |
+| Discovery | Spotify current-playback request plus geospatial Firestore query | Spotify playback, valid OAuth session, location permission, other recent listeners |
+| Likes/super likes | Firestore updates, Storage photo upload, gesture UI | Database/storage policy and device camera qualification |
+| Push notification | HTTPS client and trusted Firebase handler | Endpoint deployment/configuration and real device delivery remain unverified |
+
+Discovery and likes are service-backed code, not a bundled offline simulation.
+Offline tests fake service boundaries. An empty nearby list is possible when no
+eligible listener is publishing; sample Spotify users or location histories are
+not supplied. Playback controls, a music-streaming engine, and production social
+network operation are not established by the metadata/interaction screens.
+
 ## Application structure
 
 - `lib/auth/`: Firebase sign-up, login, and password reset.
@@ -37,6 +64,32 @@ Messaging services, and review access rules before using any personal data.
 The shipped configuration identifies the historical shared project and does not
 establish permission to access it. Android/iOS location, camera, and notification
 permissions also require device testing. Desktop support is not validated.
+
+The Dart package remains `listen_around`; imports and native callback names use
+that historical application identifier. Clone the canonical repository name:
+
+```bash
+git clone https://github.com/ntua-el21026/ntua-connectune.git
+cd ntua-connectune
+```
+
+After configuring the owned development project and callback, launch on a
+supported device with public client configuration and the qualified endpoint:
+
+```bash
+flutter devices
+flutter run \
+  --dart-define=SPOTIFY_CLIENT_ID=your-public-client-id \
+  --dart-define=SPOTIFY_REDIRECT_URI=your-registered-redirect-uri \
+  --dart-define=NOTIFICATION_API_URL=https://your-owned-host/notification-endpoint
+```
+
+The values are configuration examples, not working service addresses. Omitting
+`NOTIFICATION_API_URL` leaves notification transport unavailable while recorded
+interactions retain their documented behavior. No privileged Firebase credential
+or Spotify client secret belongs in Dart defines, assets, or platform files.
+The repository contains Flutter platform scaffolds and image assets; it does
+not contain Firebase rules or a ready-to-use deployed notification endpoint.
 
 ## Spotify and device setup
 
@@ -84,7 +137,7 @@ documented inspection scope. Provider revocation/rotation is **owner-deferred an
 not confirmed**. Original Git history remains intact and may retain old values.
 Do not restore administrative material to the client.
 
-## Bounded validation — 12 November 2026
+## Recorded validation — 12 November 2026
 
 - Flutter 3.24.5: 28 tests passed, including PKCE, discovery normalization,
   reset navigation and notification transport/persistence behavior.
@@ -98,8 +151,12 @@ Do not restore administrative material to the client.
 - `python3 scripts/check_client_security.py` retains three client source-policy
   checks; these complement executable tests and do not establish device security.
 
-No live Firebase login, Spotify callback, GPS/camera operation or push delivery
-was exercised. Android SDK/device and Apple build/signing environments are not
+The Flutter results above are retained preparation evidence. For the
+13 November 2026 documentation update, `node --test functions/test/*.test.js`
+passed 22 offline tests (0 failures, 0 skipped), and
+`python3 scripts/check_client_security.py` passed its three static checks.
+Flutter analysis, tests, and builds were not rerun. No live Firebase login,
+Spotify callback, GPS/camera operation, or push delivery was exercised. Android SDK/device and Apple build/signing environments are not
 available here. Existing research and other portfolio test receipts are reused
 for unchanged code; this pass adds no portfolio-wide audit or model evaluation.
 

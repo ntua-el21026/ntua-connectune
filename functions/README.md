@@ -79,6 +79,7 @@ to use its services.
 Run with Node.js 22:
 
 ```bash
+npm ci --ignore-scripts
 npm test
 npm run check
 ```
